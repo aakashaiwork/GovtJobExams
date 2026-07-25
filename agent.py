@@ -1,71 +1,62 @@
 import os
 import requests
-from google import genai
+from groq import Groq
 
-# --- CONFIGURATION FROM GITHUB SECRETS ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+def main():
+    # 1. Retrieve API Key and initialize Groq Client
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    if not groq_api_key:
+        raise ValueError("GROQ_API_KEY environment variable is missing.")
 
-# Initialize Gemini Client
-client = genai.Client(api_key=GEMINI_API_KEY)
+    groq_client = Groq(api_key=groq_api_key)
 
-def fetch_exam_notifications():
-    """
-    Fetches raw notification data.
-    """
-    # Placeholder sample data
-    raw_data = """
-    1. GSSSB Supervisor Recruitment 2026: Released for 436 vacancies. Application start date: July 20. Last date: Aug 3. Qualification: Diploma/Degree. Link: https://gsssb.gujarat.gov.in
-    2. SSC CGL Tier 1 Exam Date update released on ssc.gov.in. Admit card expected next week.
-    3. GPSC Prelims answer key released for Advt No 45/2026. Objections open till July 30.
-    """
-    return raw_data
-
-def summarize_with_gemini(raw_text):
-    """Passes raw notification data to Gemini for structured formatting."""
-    prompt = f"""
-    You are a daily Exam Alert Assistant for Central and Gujarat State Government exams.
-    Summarize the following exam updates into a clean, easy-to-read Telegram message.
-
-    Formatting rules:
-    - Group into: 🏛️ Gujarat Govt (OJAS/GPSC/GSSSB) and 🇮🇳 Central Govt (UPSC/SSC/IBPS).
-    - Use bullet points with Bold headings.
-    - Include Post Name, Vacancies (if any), Last Date (if any), and Official Link.
-    - Keep it crisp and direct.
-
-    Raw Updates:
-    {raw_text}
-    """
-
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
+    # 2. Prompt for daily exam and recruitment updates
+    prompt = (
+        "Provide a clean, well-structured, professional daily summary of top government "
+        "job/exam notifications in India (UPSC, SSC, IBPS, Railway) and Gujarat state updates "
+        "(GPSC, GSSSB, OJAS, PSI/ASI). Group them neatly under headings with bullet points."
     )
-    return response.text
 
-def send_telegram_message(message_text):
-    """Sends the formatted summary to your Telegram chat/channel."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    # 3. Call Groq API (using Llama 3.3 70B model)
+    print("Fetching response from Groq API...")
+    completion = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful educational assistant for competitive exam updates."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+    )
+
+    message_text = completion.choices[0].message.content
+    print("Generated Message Length:", len(message_text))
+
+    # 4. Telegram API details
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+
+    if not bot_token or not chat_id:
+        raise ValueError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID environment variable is missing.")
+
+    # 5. Send message to Telegram
+    telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message_text,
-        "parse_mode": "Markdown",
+        "chat_id": chat_id,
+        "text": message_text
     }
-    response = requests.post(url, json=payload)
+
+    print("Sending message to Telegram...")
+    response = requests.post(telegram_url, json=payload)
+    
     if response.status_code == 200:
-        print("✅ Message successfully sent to Telegram!")
+        print("Success! Message delivered to Telegram.")
     else:
-        print(f"❌ Failed to send message: {response.text}")
+        print(f"Failed to send message: {response.status_code} - {response.text}")
 
 if __name__ == "__main__":
-    print("Fetching exam updates...")
-    raw_updates = fetch_exam_notifications()
-
-    print("Generating AI Summary...")
-    ai_summary = summarize_with_gemini(raw_updates)
-
-    print("\n--- AI Generated Daily Brief ---")
-    print(ai_summary)
-
-    send_telegram_message(ai_summary)
+    main()
