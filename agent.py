@@ -1,18 +1,26 @@
 import os
 import requests
 from groq import Groq
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 def get_live_exam_news():
     """Fetch live government exam updates from web search."""
-    search_query = "latest Gujarat OJAS GPSC GSSSB recruitment notification 2026 central govt job alert"
-    ddgs = DDGS()
-    results = list(ddgs.text(search_query, max_results=5))
+    search_query = "Gujarat OJAS GPSC GSSSB recruitment notification 2026 UPSC SSC job alert"
     
-    news_context = ""
-    for idx, item in enumerate(results, 1):
-        news_context += f"{idx}. Title: {item.get('title')}\nSnippet: {item.get('body')}\n\n"
-    return news_context
+    news_snippets = []
+    try:
+        with DDGS() as ddgs:
+            # Get latest text results
+            results = list(ddgs.text(search_query, max_results=5))
+            for idx, item in enumerate(results, 1):
+                title = item.get('title', '')
+                snippet = item.get('body', '')
+                url = item.get('href', '')
+                news_snippets.append(f"{idx}. Title: {title}\nSummary: {snippet}\nURL: {url}\n")
+    except Exception as e:
+        print(f"Web Search Error: {e}")
+        
+    return "\n".join(news_snippets)
 
 def main():
     # 1. Retrieve API Key
@@ -26,23 +34,27 @@ def main():
     print("Fetching live exam updates from the web...")
     live_context = get_live_exam_news()
 
-    # 3. Dynamic Prompt with Live Context
+    if not live_context:
+        live_context = "No direct web search snippets retrieved. Provide key active recruitment links for GPSC, OJAS, and Central exams."
+
+    # 3. Build Prompt with Real-Time Web Context
     prompt = (
-        f"Here are the latest live web search snippets regarding government exam notifications:\n\n"
+        f"Here are live search results regarding active government exam notifications:\n\n"
         f"{live_context}\n\n"
-        "Based ONLY on recent active updates, generate a clean, highly relevant summary of "
-        "top government job/exam notifications (UPSC, SSC, IBPS, GPSC, OJAS, GSSSB). "
-        "Organize with clean headings and bullet points. Do not mention outdated years like 2024."
+        "Instructions:\n"
+        "1. Summarize current and active government job notifications for Gujarat (GPSC, OJAS, GSSSB) and Central (UPSC, SSC, IBPS).\n"
+        "2. Organize clearly using headings and bullet points.\n"
+        "3. Only mention active, current notifications. Do not use or mention outdated years like 2024 or 2025."
     )
 
-    # 4. Call Groq API
-    print("Sending live context to Groq API...")
+    # 4. Request Summary from Groq API
+    print("Generating response via Groq Llama model...")
     completion = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
             {
                 "role": "system",
-                "content": "You are an accurate educational assistant providing current Indian government exam updates."
+                "content": "You are a daily exam alert assistant providing up-to-date Indian government job notifications."
             },
             {
                 "role": "user",
@@ -53,24 +65,24 @@ def main():
 
     message_text = completion.choices[0].message.content
 
-    # 5. Telegram API details
+    # 5. Telegram API Delivery
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not bot_token or not chat_id:
-        raise ValueError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID environment variable is missing.")
+        raise ValueError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing.")
 
-    # 6. Send to Telegram
     telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": message_text
     }
 
-    print("Sending update to Telegram...")
+    print("Sending live update to Telegram...")
     response = requests.post(telegram_url, json=payload)
+    
     if response.status_code == 200:
-        print("Success! Live update delivered to Telegram.")
+        print("Success! Live exam updates sent to Telegram.")
     else:
         print(f"Failed to send message: {response.status_code} - {response.text}")
 
