@@ -7,34 +7,51 @@ from playwright.sync_api import sync_playwright
 IXAMBEE_URL = "https://www.ixambee.com/upcoming-government-exams"
 
 def scrape_ixambee_content():
-    """Scrape ixamBee page using Playwright with deep scrolling to trigger JS lazy-loads."""
+    """Scrape ixamBee page using Playwright stealth configurations."""
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # Launch chromium with anti-bot flags
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox"
+                ]
+            )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                viewport={'width': 1280, 'height': 800}
+                viewport={'width': 1366, 'height': 768},
+                locale="en-US"
             )
+            
             page = context.new_page()
             
+            # Mask webdriver flag
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+            
             print(f"Navigating to {IXAMBEE_URL}...")
-            page.goto(IXAMBEE_URL, wait_until="domcontentloaded", timeout=60000)
+            page.goto(IXAMBEE_URL, wait_until="networkidle", timeout=60000)
             
-            # Wait 5 seconds for initial JS rendering
-            page.wait_for_timeout(5000)
+            # Pause to allow Cloudflare JS challenge to pass if triggered
+            page.wait_for_timeout(7000)
             
-            # Scroll down to trigger lazy loading of exam tables
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2);")
-            page.wait_for_timeout(2000)
-            
-            # Get full inner text of the page body
+            # Check if we were caught by Cloudflare
             body_text = page.inner_text("body")
-            browser.close()
+            if "Cloudflare" in body_text or "Verify you are human" in body_text:
+                print("Cloudflare challenge page detected. Waiting 5 more seconds...")
+                page.wait_for_timeout(5000)
+                body_text = page.inner_text("body")
 
+            browser.close()
             return body_text
             
     except Exception as e:
-        print(f"Error scraping ixamBee with Playwright: {e}")
+        print(f"Error scraping ixamBee: {e}")
         return ""
 
 def main():
@@ -48,23 +65,17 @@ def main():
     # 2. Scrape page text
     raw_text = scrape_ixambee_content()
 
-    if not raw_text or len(raw_text.strip()) < 100:
-        print("Scraping returned no meaningful data.")
+    if not raw_text or "Cloudflare" in raw_text and "Upcoming Government Exams" not in raw_text:
+        print("Scraping blocked or returned no exam data.")
         return
-
-    # Clean text to avoid token limits while preserving table content
-    cleaned_lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
-    condensed_text = "\n".join(cleaned_lines[:400])  # Take primary content block
-
-    print(f"Successfully extracted {len(condensed_text)} characters from page.")
 
     # 3. Prompt for Groq AI
     prompt = (
         f"Below is raw extracted text from ixamBee's 'Upcoming Government Exams' page:\n\n"
-        f"{condensed_text}\n\n"
+        f"{raw_text[:7000]}\n\n"
         "Instructions:\n"
         "1. Extract ALL upcoming government exams listed in the text.\n"
-        "2. Format the response as a clean Telegram message.\n"
+        "2. Format the response as a clean Telegram message with emojis.\n"
         "3. Categorize them logically (e.g., Banking, Insurance & Regulatory, State/Central Exams).\n"
         "4. For every exam, list:\n"
         "   - 📌 **Exam Name**\n"
@@ -80,7 +91,7 @@ def main():
         messages=[
             {
                 "role": "system",
-                "content": "You are a precise alert agent that extracts exam schedules from raw website text and formats them for Telegram."
+                "content": "You are a precise alert agent that extracts exam schedules from website text and formats them for Telegram."
             },
             {
                 "role": "user",
