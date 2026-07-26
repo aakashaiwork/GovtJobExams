@@ -1,18 +1,24 @@
 import os
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 from groq import Groq
 
 IXAMBEE_URL = "https://www.ixambee.com/upcoming-government-exams"
 
 def scrape_ixambee_table():
-    """Scrape the main 'Upcoming Government Exams' table directly from ixamBee."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    """Scrape the main 'Upcoming Government Exams' table using cloudscraper to bypass 403 blocks."""
+    # Initialize cloudscraper to simulate a real browser request
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
     
     try:
-        response = requests.get(IXAMBEE_URL, headers=headers, timeout=15)
+        response = scraper.get(IXAMBEE_URL, timeout=20)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, "html.parser")
@@ -27,14 +33,9 @@ def scrape_ixambee_table():
             for row in rows[1:]:  # Skip header row
                 cols = [col.text.strip() for col in row.find_all(["td", "th"])]
                 if len(cols) >= 3:
-                    exam_name = cols[0]
-                    form_dates = cols[1]
-                    exam_dates = cols[2]
-                    
-                    # Clean up internal whitespace/newlines
-                    exam_name = " ".join(exam_name.split())
-                    form_dates = " ".join(form_dates.split())
-                    exam_dates = " ".join(exam_dates.split())
+                    exam_name = " ".join(cols[0].split())
+                    form_dates = " ".join(cols[1].split())
+                    exam_dates = " ".join(cols[2].split())
                     
                     if exam_name:
                         extracted_data.append(
@@ -56,7 +57,7 @@ def main():
     groq_client = Groq(api_key=groq_api_key)
 
     # 2. Scrape exact ixamBee page
-    print(f"Scraping {IXAMBEE_URL}...")
+    print(f"Scraping {IXAMBEE_URL} via Cloudscraper...")
     scraped_data = scrape_ixambee_table()
 
     if not scraped_data:
@@ -69,7 +70,7 @@ def main():
         f"{scraped_data}\n\n"
         "Instructions:\n"
         "1. Create a full, clean Telegram notification summarizing ALL exams listed above.\n"
-        "2. Group/Organize them logically into categories (e.g., Banking & Financial, Insurance & Regulatory, Central/Railways/SSC, etc.).\n"
+        "2. Group/Organize them logically into categories (e.g., Banking & Financial, Insurance & Regulatory, Central/Railways/SSC, Gujarat/State Level, etc.).\n"
         "3. For every exam, present:\n"
         "   - 📌 **Exam Name**\n"
         "   - 🗓️ **Form Filling Dates**\n"
