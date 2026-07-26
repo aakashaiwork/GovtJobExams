@@ -1,24 +1,16 @@
 import os
 import requests
-import cloudscraper
 from bs4 import BeautifulSoup
 from groq import Groq
+from curl_cffi import requests as impersonate_requests
 
 IXAMBEE_URL = "https://www.ixambee.com/upcoming-government-exams"
 
 def scrape_ixambee_table():
-    """Scrape the main 'Upcoming Government Exams' table using cloudscraper to bypass 403 blocks."""
-    # Initialize cloudscraper to simulate a real browser request
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'desktop': True
-        }
-    )
-    
+    """Scrape the main 'Upcoming Government Exams' table using curl_cffi to match browser TLS fingerprint."""
     try:
-        response = scraper.get(IXAMBEE_URL, timeout=20)
+        # Impersonate modern Chrome browser TLS fingerprint
+        response = impersonate_requests.get(IXAMBEE_URL, impersonate="chrome120", timeout=20)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, "html.parser")
@@ -57,7 +49,7 @@ def main():
     groq_client = Groq(api_key=groq_api_key)
 
     # 2. Scrape exact ixamBee page
-    print(f"Scraping {IXAMBEE_URL} via Cloudscraper...")
+    print(f"Scraping {IXAMBEE_URL} via curl_cffi...")
     scraped_data = scrape_ixambee_table()
 
     if not scraped_data:
@@ -70,7 +62,7 @@ def main():
         f"{scraped_data}\n\n"
         "Instructions:\n"
         "1. Create a full, clean Telegram notification summarizing ALL exams listed above.\n"
-        "2. Group/Organize them logically into categories (e.g., Banking & Financial, Insurance & Regulatory, Central/Railways/SSC, Gujarat/State Level, etc.).\n"
+        "2. Group/Organize them logically into categories (e.g., Banking & Financial, Insurance & Regulatory, Central/Railways/SSC, State Level, etc.).\n"
         "3. For every exam, present:\n"
         "   - 📌 **Exam Name**\n"
         "   - 🗓️ **Form Filling Dates**\n"
