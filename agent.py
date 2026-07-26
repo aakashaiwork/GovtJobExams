@@ -2,107 +2,98 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from groq import Groq
-from playwright.sync_api import sync_playwright
 
+# Target Page URL
 IXAMBEE_URL = "https://www.ixambee.com/upcoming-government-exams"
 
-def scrape_ixambee_content():
-    """Scrape ixamBee page using Playwright stealth configurations."""
+def get_clean_page_text():
+    """Fetch raw page HTML and strip out structural tags to get plain text for LLM processing."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    
     try:
-        with sync_playwright() as p:
-            # Launch chromium with anti-bot flags
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox"
-                ]
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                viewport={'width': 1366, 'height': 768},
-                locale="en-US"
-            )
+        response = requests.get(IXAMBEE_URL, headers=headers, timeout=20)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Remove script tags, style tags, and header/footer noise
+        for element in soup(["script", "style", "nav", "footer", "header"]):
+            element.decompose()
             
-            page = context.new_page()
-            
-            # Mask webdriver flag
-            page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """)
-            
-            print(f"Navigating to {IXAMBEE_URL}...")
-            page.goto(IXAMBEE_URL, wait_until="networkidle", timeout=60000)
-            
-            # Pause to allow Cloudflare JS challenge to pass if triggered
-            page.wait_for_timeout(7000)
-            
-            # Check if we were caught by Cloudflare
-            body_text = page.inner_text("body")
-            if "Cloudflare" in body_text or "Verify you are human" in body_text:
-                print("Cloudflare challenge page detected. Waiting 5 more seconds...")
-                page.wait_for_timeout(5000)
-                body_text = page.inner_text("body")
-
-            browser.close()
-            return body_text
-            
+        # Get extracted text lines
+        raw_lines = soup.get_text(separator="\n").split("\n")
+        cleaned_lines = [line.strip() for line in raw_lines if line.strip()]
+        
+        return "\n".join(cleaned_lines)
+        
     except Exception as e:
-        print(f"Error scraping ixamBee: {e}")
+        print(f"Error fetching web page: {e}")
         return ""
 
 def main():
-    # 1. Retrieve API Key
+    # 1. Retrieve Groq API Key
     groq_api_key = os.environ.get("GROQ_API_KEY")
     if not groq_api_key:
         raise ValueError("GROQ_API_KEY environment variable is missing.")
 
     groq_client = Groq(api_key=groq_api_key)
 
-    # 2. Scrape page text
-    raw_text = scrape_ixambee_content()
+    # 2. Extract Web Content
+    print(f"Fetching data from {IXAMBEE_URL}...")
+    page_text = get_clean_page_text()
 
-    if not raw_text or "Cloudflare" in raw_text and "Upcoming Government Exams" not in raw_text:
-        print("Scraping blocked or returned no exam data.")
+    if not page_text:
+        print("No text content could be fetched.")
         return
 
-    # 3. Prompt for Groq AI
-    prompt = (
+    # Truncate text to keep within token limits while capturing main content
+    content_payload = page_text[:8000]
+
+    # 3. Dedicated Prompt for Llama-3.3-70b
+    system_instruction = (
+        "You are an automated government exam alert assistant. "
+        "Your sole task is to process raw web text, extract all exam details, "
+        "and format them into a beautiful, highly readable Telegram notification."
+    )
+
+    user_prompt = (
         f"Below is raw extracted text from ixamBee's 'Upcoming Government Exams' page:\n\n"
-        f"{raw_text[:7000]}\n\n"
+        f"--- RAW TEXT START ---\n"
+        f"{content_payload}\n"
+        f"--- RAW TEXT END ---\n\n"
         "Instructions:\n"
-        "1. Extract ALL upcoming government exams listed in the text.\n"
-        "2. Format the response as a clean Telegram message with emojis.\n"
-        "3. Categorize them logically (e.g., Banking, Insurance & Regulatory, State/Central Exams).\n"
-        "4. For every exam, list:\n"
+        "1. Identify all government and banking exams listed in the text.\n"
+        "2. If no exam table is found in the text, respond strictly with: 'No active exams found.'\n"
+        "3. Otherwise, group the exams into neat categories (e.g., 🏦 Banking & Finance, 🏛️ Regulatory & Defense, 📑 State & Others).\n"
+        "4. For EVERY exam, present:\n"
         "   - 📌 **Exam Name**\n"
         "   - 🗓️ **Form Filling Dates**\n"
         "   - 📅 **Exam Dates (Prelims / Mains)**\n"
-        "5. Keep the response concise and ready for mobile broadcast."
+        "5. Keep the formatting clean, mobile-friendly, and formatted in Markdown for Telegram."
     )
 
-    # 4. Call Groq API
-    print("Sending extracted data to Groq for parsing...")
+    print("Processing scraped text via Groq LLM prompt...")
     completion = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {
-                "role": "system",
-                "content": "You are a precise alert agent that extracts exam schedules from website text and formats them for Telegram."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_prompt}
         ],
+        temperature=0.2
     )
 
     message_text = completion.choices[0].message.content
 
-    # 5. Send to Telegram
+    # Skip sending if LLM found no exams or hit a block
+    if "No active exams found" in message_text:
+        print("LLM found no exam details in the page content.")
+        return
+
+    # 4. Dispatch to Telegram
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -112,16 +103,20 @@ def main():
     telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
         "chat_id": chat_id,
-        "text": message_text
+        "text": message_text,
+        "parse_mode": "Markdown"
     }
 
     print("Sending update to Telegram...")
     response = requests.post(telegram_url, json=payload)
     
     if response.status_code == 200:
-        print("Success! Live exam updates sent to Telegram.")
+        print("Success! Clean LLM-formatted update sent to Telegram.")
     else:
-        print(f"Failed to send message: {response.status_code} - {response.text}")
+        # Retry without Markdown parsing in case of unescaped Telegram syntax
+        payload.pop("parse_mode")
+        requests.post(telegram_url, json=payload)
+        print("Sent fallback plain-text update to Telegram.")
 
 if __name__ == "__main__":
     main()
