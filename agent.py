@@ -2,18 +2,33 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from groq import Groq
-from curl_cffi import requests as impersonate_requests
+from playwright.sync_api import sync_playwright
 
 IXAMBEE_URL = "https://www.ixambee.com/upcoming-government-exams"
 
 def scrape_ixambee_table():
-    """Scrape the main 'Upcoming Government Exams' table using curl_cffi to match browser TLS fingerprint."""
+    """Scrape the main 'Upcoming Government Exams' table using headless Playwright browser."""
     try:
-        # Impersonate modern Chrome browser TLS fingerprint
-        response = impersonate_requests.get(IXAMBEE_URL, impersonate="chrome120", timeout=20)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, "html.parser")
+        with sync_playwright() as p:
+            # Launch headless Chromium with standard browser arguments
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                viewport={'width': 1280, 'height': 800}
+            )
+            page = context.new_page()
+            
+            # Navigate to URL and wait until DOM is loaded
+            print(f"Navigating to {IXAMBEE_URL} via Playwright...")
+            page.goto(IXAMBEE_URL, wait_until="domcontentloaded", timeout=30000)
+            
+            # Allow a short delay for any dynamic content/tables to render
+            page.wait_for_timeout(3000)
+            
+            html_content = page.content()
+            browser.close()
+
+        soup = BeautifulSoup(html_content, "html.parser")
         tables = soup.find_all("table")
         
         if not tables:
@@ -37,7 +52,7 @@ def scrape_ixambee_table():
         return "\n".join(extracted_data)
         
     except Exception as e:
-        print(f"Error scraping ixamBee: {e}")
+        print(f"Error scraping ixamBee with Playwright: {e}")
         return ""
 
 def main():
@@ -49,7 +64,6 @@ def main():
     groq_client = Groq(api_key=groq_api_key)
 
     # 2. Scrape exact ixamBee page
-    print(f"Scraping {IXAMBEE_URL} via curl_cffi...")
     scraped_data = scrape_ixambee_table()
 
     if not scraped_data:
